@@ -12,7 +12,7 @@ class Msg {
     this.to = "";
     this.from = "";
     this.text = "";
-    this.subject = ""; // Added for Gmail UI, though C++ didn't have it explicitly, we'll auto-generate or append
+    this.subject = "";
     this.link = null;
   }
 }
@@ -21,213 +21,197 @@ class User {
   constructor() {
     this.username = "";
     this.password = "";
-    this.headS = null; // Sent messages Linked List Head
-    this.headR = null; // Received messages Linked List Head
-    this.trash = [];   // Trash vector (Array)
-    this.next = null;  // DLL Next
-    this.prev = null;  // DLL Prev
+    this.headS = null;
+    this.headR = null;
+    this.trash = [];
+    this.next = null;
+    this.prev = null;
   }
 }
 
 class System {
   constructor() {
-    this.start = null; // Head of User DLL
-    this.last = null;  // Tail of User DLL
+    this.start = null;
+    this.last = null;
   }
 
-  // --- User Management ---
-
-  // Create a new user (SignUp)
-  // Returns: { success: true, message: "..." } or { success: false, message: "..." }
+  // ---------- USER MANAGEMENT ----------
   createUser(username, password) {
-    if (!username || !password) return { success: false, message: "Invalid input" };
+    if (!username || !password)
+      return { success: false, message: "Invalid input" };
 
     let ptr = this.start;
-    while (ptr != null) {
-      if (ptr.username === username) {
+    while (ptr) {
+      if (ptr.username === username)
         return { success: false, message: "Username already exists" };
-      }
       ptr = ptr.next;
     }
 
-    let newUser = new User();
-    newUser.username = username;
-    newUser.password = password;
+    const user = new User();
+    user.username = username;
+    user.password = password;
 
-    if (this.start === null) {
-      this.start = newUser;
-      this.last = newUser;
+    if (!this.start) {
+      this.start = this.last = user;
     } else {
-      this.last.next = newUser;
-      newUser.prev = this.last;
-      this.last = newUser;
+      this.last.next = user;
+      user.prev = this.last;
+      this.last = user;
     }
 
-    return { success: true, message: "Account created successfully" };
+    return { success: true };
   }
 
-  // Login
-  // Returns: User object or null
   login(username, password) {
     let ptr = this.start;
-    while (ptr != null) {
-      if (ptr.username === username) {
-        if (ptr.password === password) {
-          return ptr;
-        } else {
-          return null; // Wrong password
-        }
+    while (ptr) {
+      if (ptr.username === username && ptr.password === password) {
+        return ptr;
       }
       ptr = ptr.next;
     }
-    return null; // User not found
+    return null;
   }
 
-  // --- Messaging ---
-
-  // Send Message
+  // ---------- MESSAGING ----------
   sendMessage(fromUser, toUsername, text, subject = "No Subject") {
-    let ptrT = this.start;
-    while (ptrT != null) {
-      if (ptrT.username === toUsername) break;
-      ptrT = ptrT.next;
+    let receiver = this.start;
+    while (receiver && receiver.username !== toUsername) {
+      receiver = receiver.next;
     }
 
-    if (ptrT == null) return { success: false, message: "Recipient not found" };
+    if (!receiver)
+      return { success: false, message: "Recipient not found" };
 
-    let date = new Date().toString();
+    const dt = new Date().toString();
 
-    // 1. Add to Recipient's Inbox (Head of SLL)
-    let mIn = new Msg();
-    mIn.to = toUsername;
-    mIn.from = fromUser.username;
-    mIn.text = text;
-    mIn.subject = subject;
-    mIn.dt = date;
-    mIn.read = false;
+    const inboxMsg = new Msg();
+    inboxMsg.from = fromUser.username;
+    inboxMsg.to = toUsername;
+    inboxMsg.text = text;
+    inboxMsg.subject = subject;
+    inboxMsg.dt = dt;
+    inboxMsg.link = receiver.headR;
+    receiver.headR = inboxMsg;
 
-    mIn.link = ptrT.headR;
-    ptrT.headR = mIn;
+    const sentMsg = new Msg();
+    sentMsg.sent = true;
+    sentMsg.from = fromUser.username;
+    sentMsg.to = toUsername;
+    sentMsg.text = text;
+    sentMsg.subject = subject;
+    sentMsg.dt = dt;
+    sentMsg.read = true;
+    sentMsg.link = fromUser.headS;
+    fromUser.headS = sentMsg;
 
-    // 2. Add to Sender's Sentbox (Head of SLL)
-    let mOut = new Msg();
-    mOut.sent = true;
-    mOut.to = toUsername;
-    mOut.from = fromUser.username;
-    mOut.text = text;
-    mOut.subject = subject;
-    mOut.dt = date;
-    mOut.read = true; // Sent messages are read by default?
-
-    mOut.link = fromUser.headS;
-    fromUser.headS = mOut;
-
-    return { success: true, message: "Sent" };
+    return { success: true };
   }
 
-  // Get Messages as Array (Helper for UI)
-  // type: "INBOX", "SENT", "STARRED_INBOX", "STARRED_SENT"
   getMessages(user, type) {
     let msgs = [];
-    let head = null;
-
-    if (type === "INBOX" || type === "STARRED_INBOX") head = user.headR;
-    else if (type === "SENT" || type === "STARRED_SENT") head = user.headS;
+    let head =
+      type === "SENT" || type === "STARRED_SENT"
+        ? user.headS
+        : user.headR;
 
     let ptr = head;
-    while (ptr != null) {
-      // Apply Filters
-      if (type.includes("STARRED")) {
-        if (ptr.star) msgs.push(ptr);
-      } else {
-        msgs.push(ptr);
-      }
+    while (ptr) {
+      if (!type.includes("STARRED") || ptr.star) msgs.push(ptr);
       ptr = ptr.link;
     }
     return msgs;
   }
 
-  // Search
   searchMessages(user, query) {
-    let results = [];
-    if (!query) return results;
+    if (!query) return [];
     query = query.toLowerCase();
 
-    // Search in Inbox and Sent
-    let sources = [user.headR, user.headS];
-
-    for (let head of sources) {
+    let res = [];
+    for (let head of [user.headR, user.headS]) {
       let ptr = head;
-      while (ptr != null) {
-        if (ptr.text.toLowerCase().includes(query) ||
+      while (ptr) {
+        if (
+          ptr.text.toLowerCase().includes(query) ||
           ptr.from.toLowerCase().includes(query) ||
           ptr.to.toLowerCase().includes(query) ||
-          ptr.subject.toLowerCase().includes(query)) {
-          results.push(ptr);
+          ptr.subject.toLowerCase().includes(query)
+        ) {
+          res.push(ptr);
         }
         ptr = ptr.link;
       }
     }
-    return results;
+    return res;
   }
 
   getTrash(user) {
     return user.trash;
   }
 
-  // Action: Delete
-  // Moves to trash
-  deleteMessage(user, type, msgObj) {
-    // We need to find the node and remove it from the SLL
-    // type: "INBOX" (headR) or "SENT" (headS)
-    let headProp = (type === "SENT") ? "headS" : "headR";
-    let head = user[headProp];
+  deleteMessage(user, type, msg) {
+    let key = type === "SENT" ? "headS" : "headR";
+    let head = user[key];
 
-    if (head === null) return false;
+    if (!head) return false;
 
-    if (head === msgObj) {
-      user[headProp] = head.link;
-      user.trash.push(msgObj);
+    if (head === msg) {
+      user[key] = head.link;
+      user.trash.push(msg);
       return true;
     }
 
     let prev = head;
-    let curr = head.link;
-    while (curr != null) {
-      if (curr === msgObj) {
-        prev.link = curr.link;
-        user.trash.push(msgObj);
+    let cur = head.link;
+    while (cur) {
+      if (cur === msg) {
+        prev.link = cur.link;
+        user.trash.push(msg);
         return true;
       }
-      prev = curr;
-      curr = curr.link;
+      prev = cur;
+      cur = cur.link;
     }
     return false;
   }
 
-  // Action: Star/Unstar
-  toggleStar(msgObj) {
-    msgObj.star = !msgObj.star;
-    return msgObj.star;
+  toggleStar(msg) {
+    msg.star = !msg.star;
+    return msg.star;
   }
 
-  // Action: Read
-  markRead(msgObj) {
-    msgObj.read = true;
+  markRead(msg) {
+    msg.read = true;
   }
 }
 
-// Global System Instance
+// ---------- GLOBAL BACKEND ----------
 window.backend = new System();
 
-// Seed some data for testing
-window.backend.createUser("saurav", "1234");
+// ---------- SEED DATA (FINAL) ----------
+window.backend.createUser("ayush", "1234");
 window.backend.createUser("abhinav", "1234");
 
-// Manual login to send welcome message
-let u1 = window.backend.login("saurav", "1234");
+let u1 = window.backend.login("ayush", "1234");
 let u2 = window.backend.login("abhinav", "1234");
 
-window.backend.sendMessage(u1, "abhinav", "Welcome to the simulation! This is using Linked Lists under the hood.", "Hello World");
-window.backend.sendMessage(u2, "saurav", "Thanks! The UI looks like Gmail but the logic is C++.", "Re: Hello World");
-window.backend.sendMessage(u1, "abhinav", "Lorem ipsum dolor sit amet, consectetur adipiscing elit.", "Project Update");
+window.backend.sendMessage(
+  u1,
+  "abhinav",
+  "Welcome to the simulation! This is using Linked Lists under the hood.",
+  "Hello World"
+);
+
+window.backend.sendMessage(
+  u2,
+  "ayush",
+  "Thanks! The UI looks like Gmail but the logic is C++.",
+  "Re: Hello World"
+);
+
+window.backend.sendMessage(
+  u1,
+  "abhinav",
+  "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
+  "Project Update"
+);
